@@ -1,0 +1,25 @@
+LINK
+2 4 3
+
+# Segmenti: name base size flags
+text 0x1000 0x20 PR
+data 0x2000 0x10 PR
+bss 0x3000 0x08 B
+
+# Simboli: name value seg type
+_start 0x0 1 global
+foo 0x5 1 global
+bar 0x0 2 global
+baz 0x0 0 undefined
+
+# Relocazioni: loc seg ref type extra
+0x3 1 4 ABS
+0xA 1 2 REL
+0x4 2 1 ABS
+
+# Dati dei segmenti (solo quelli con flag P — “present”)
+<per segmento “text” di size 0x20 => ci vogliono 0x40 caratteri hex = 64 cifre esadecimali>
+00112233445566778899AABBCCDDEEFF00112233445566778899AABBCCDDEEFF0011223344556677
+
+# Dati del segmento “data” (size 0x10 => 0x20 caratteri hex = 32 cifre)
+AABBCCDDEEFF00112233445566778899AABBCCDD
