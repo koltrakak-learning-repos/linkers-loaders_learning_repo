@@ -11,5 +11,9 @@ func main() {
 		log.Fatal("ho bisogno di almeno un file oggetto in input come argomento")
 	}
 
-	obj.Read(os.Args[1])
+	var o obj.MyObjectFormat
+	err := o.ParseObjectFile(os.Args[1])
+	if err != nil {
+		log.Fatalln(err)
+	}
 }
