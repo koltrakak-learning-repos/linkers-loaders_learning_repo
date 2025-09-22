@@ -35,6 +35,19 @@ const (
 	Present
 )
 
+func (f segmentFlag) String() string {
+	switch f {
+	case Readable:
+		return "R"
+	case Writable:
+		return "W"
+	case Present:
+		return "P"
+	default:
+		return "?"
+	}
+}
+
 var segmentFlagParsingMap = map[string]segmentFlag{
 	"R": Readable,
 	"W": Writable,
@@ -82,6 +95,17 @@ var symbolKindParsingMap = map[string]symbolKind{
 	"U": Undefined,
 }
 
+func (sk symbolKind) String() string {
+	switch sk {
+	case Defined:
+		return "D"
+	case Undefined:
+		return "U"
+	default:
+		return "?"
+	}
+}
+
 func parseSymbolKind(kind string) (symbolKind, error) {
 	if v, ok := symbolKindParsingMap[kind]; ok {
 		return v, nil
@@ -114,6 +138,17 @@ const (
 var relocationKindParsingMap = map[string]relocationKind{
 	"A4": Absolute4,
 	"R4": Relative4,
+}
+
+func (rk relocationKind) String() string {
+	switch rk {
+	case Absolute4:
+		return "A4"
+	case Relative4:
+		return "R4"
+	default:
+		return "?"
+	}
 }
 
 func parseRelocationKind(kind string) (relocationKind, error) {
@@ -163,12 +198,13 @@ func getNextLine(scanner *bufio.Scanner) (string, error) {
 	return line, nil
 }
 
-func (obj *MyObjectFormat) ParseObjectFile(filename string) error {
+func ParseObjectFile(filename string) (*MyObjectFormat, error) {
+	obj := &MyObjectFormat{}
 	var err error
 
 	f, err := os.Open(filename)
 	if err != nil {
-		return fmt.Errorf("impossibile aprire file %s: %w", filename, err)
+		return nil, fmt.Errorf("impossibile aprire file %s: %w", filename, err)
 	}
 	defer f.Close()
 
@@ -180,19 +216,19 @@ func (obj *MyObjectFormat) ParseObjectFile(filename string) error {
 	/* parsing dell'header == prime due linee */
 	magic, err := getNextLine(scanner)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	if magic != LINK {
-		return fmt.Errorf("magic number sbagliato! %s non è del formato giusto", filename)
+		return nil, fmt.Errorf("magic number sbagliato! %s non è del formato giusto", filename)
 	}
 
 	obj_dims, err := getNextLine(scanner)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	_, err = fmt.Sscanf(obj_dims, "%d %d %d", &obj.header.segment_num, &obj.header.symbol_num, &obj.header.relocation_entries_num)
 	if err != nil {
-		return fmt.Errorf("errore nella lettura dell'header: %w", err)
+		return nil, fmt.Errorf("errore nella lettura dell'header: %w", err)
 	}
 	fmt.Println("### HEADER", obj.header)
 
@@ -206,18 +242,18 @@ func (obj *MyObjectFormat) ParseObjectFile(filename string) error {
 	for ; i < obj.header.segment_num; i++ {
 		segmentString, err := getNextLine(scanner)
 		if err != nil {
-			return err
+			return nil, err
 		}
 
 		var s segment
 		var segment_flags string
 		_, err = fmt.Sscanf(segmentString, "%s %d %d %s", &s.name, &s.start_address, &s.length, &segment_flags)
 		if err != nil {
-			return fmt.Errorf("errore nella lettura del segmento %d -> %s: %w", i+1, segmentString, err)
+			return nil, fmt.Errorf("errore nella lettura del segmento %d -> %s: %w", i+1, segmentString, err)
 		}
 		s.flags, err = parseSegmentFlags(segment_flags)
 		if err != nil {
-			return err
+			return nil, err
 		}
 		obj.segmentTable = append(obj.segmentTable, s)
 	}
@@ -228,18 +264,18 @@ func (obj *MyObjectFormat) ParseObjectFile(filename string) error {
 	for ; i < obj.header.symbol_num; i++ {
 		symbolString, err := getNextLine(scanner)
 		if err != nil {
-			return err
+			return nil, err
 		}
 
 		var s symbol
 		var kindString string
 		_, err = fmt.Sscanf(symbolString, "%s %d %d %s", &s.name, &s.value, &s.segnum, &kindString)
 		if err != nil {
-			return fmt.Errorf("errore nella lettura del simbolo %d -> %s: %w", i+1, symbolString, err)
+			return nil, fmt.Errorf("errore nella lettura del simbolo %d -> %s: %w", i+1, symbolString, err)
 		}
 		s.kind, err = parseSymbolKind(kindString)
 		if err != nil {
-			return err
+			return nil, err
 		}
 		obj.symbolTable = append(obj.symbolTable, s)
 	}
@@ -250,18 +286,18 @@ func (obj *MyObjectFormat) ParseObjectFile(filename string) error {
 	for ; i < obj.header.relocation_entries_num; i++ {
 		relocationString, err := getNextLine(scanner)
 		if err != nil {
-			return err
+			return nil, err
 		}
 
 		var r relocationEntry
 		var kindString string
 		_, err = fmt.Sscanf(relocationString, "%d %d %d %s", &r.loc, &r.segnum, &r.ref, &kindString)
 		if err != nil {
-			return fmt.Errorf("errore nella lettura della relocation entry %d -> %s: %w", i+1, relocationString, err)
+			return nil, fmt.Errorf("errore nella lettura della relocation entry %d -> %s: %w", i+1, relocationString, err)
 		}
 		r.kind, err = parseRelocationKind(kindString)
 		if err != nil {
-			return err
+			return nil, err
 		}
 		obj.relocationTable = append(obj.relocationTable, r)
 	}
@@ -272,23 +308,49 @@ func (obj *MyObjectFormat) ParseObjectFile(filename string) error {
 	for ; i < obj.header.segment_num; i++ {
 		segmentDataHexString, err := getNextLine(scanner)
 		if err != nil {
-			return err
+			return nil, err
 		}
 		segmentData, err := hex.DecodeString(segmentDataHexString)
 		if err != nil {
-			return err
+			return nil, err
 		}
 
 		obj.data = append(obj.data, segmentData)
 	}
 	fmt.Println("### Dati dei segmenti", obj.data)
 
-	fmt.Println("### Oggetto finale")
-	fmt.Println(obj)
-
-	return nil
+	return obj, nil
 }
 
-func (obj *MyObjectFormat) WriteObjectFile() {
-	//
+func (obj *MyObjectFormat) WriteObjectFile(filename string) error {
+	f, err := os.Create(filename)
+	if err != nil {
+		return fmt.Errorf("impossibile aprire file %s: %w", filename, err)
+	}
+	defer f.Close()
+
+	// magic
+	_, err = fmt.Fprintln(f, "LINK")
+	if err != nil {
+		return err
+	}
+	//header
+	_, err = fmt.Fprintf(f, "%d %d %d\n", obj.header.segment_num, obj.header.symbol_num, obj.header.relocation_entries_num)
+	if err != nil {
+		return err
+	}
+	// segments
+	for i := 0; i < int(obj.header.segment_num); i++ {
+		flags := ""
+		for _, f := range obj.segmentTable[i].flags {
+			flags += f.String()
+		}
+
+		_, err = fmt.Fprintf(f, "%s %d %d %s\n", obj.segmentTable[i].name, obj.segmentTable[i].start_address, obj.segmentTable[i].length, flags)
+		if err != nil {
+			return err
+		}
+	}
+
+	return nil
 }
