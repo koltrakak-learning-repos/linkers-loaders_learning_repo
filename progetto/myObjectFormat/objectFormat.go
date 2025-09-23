@@ -340,6 +340,7 @@ func (obj *MyObjectFormat) WriteObjectFile(filename string) error {
 		return err
 	}
 	// segments
+	fmt.Fprintln(f, "# segments")
 	for i := 0; i < int(obj.header.segment_num); i++ {
 		flags := ""
 		for _, f := range obj.segmentTable[i].flags {
@@ -351,6 +352,29 @@ func (obj *MyObjectFormat) WriteObjectFile(filename string) error {
 			return err
 		}
 	}
-
+	// symbols
+	fmt.Fprintln(f, "# symbols")
+	for i := 0; i < int(obj.header.symbol_num); i++ {
+		_, err = fmt.Fprintf(f, "%s %d %d %s\n", obj.symbolTable[i].name, obj.symbolTable[i].value, obj.symbolTable[i].segnum, obj.symbolTable[i].kind.String())
+		if err != nil {
+			return err
+		}
+	}
+	// relocatins
+	fmt.Fprintln(f, "# relocations")
+	for i := 0; i < int(obj.header.relocation_entries_num); i++ {
+		_, err = fmt.Fprintf(f, "%d %d %d %s\n", obj.relocationTable[i].loc, obj.relocationTable[i].segnum, obj.relocationTable[i].ref, obj.relocationTable[i].kind.String())
+		if err != nil {
+			return err
+		}
+	}
+	// data
+	fmt.Fprintln(f, "# segment data")
+	for i := 0; i < int(obj.header.segment_num); i++ {
+		_, err = fmt.Fprintln(f, hex.EncodeToString(obj.data[i]))
+		if err != nil {
+			return err
+		}
+	}
 	return nil
 }
