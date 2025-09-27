@@ -8,3 +8,7 @@ LINK
 schrod 0 1 D
 wiggleroom 200 0 U
 harbor 300 2 D
+# segment data
+00001211abbccc
+ccfffffafafafd
+bcfffffafafafd

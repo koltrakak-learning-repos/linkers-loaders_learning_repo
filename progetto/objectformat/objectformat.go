@@ -1,4 +1,5 @@
-package objectFormat
+// Package objectformat definisce il formato dei file oggetto letti e prodotti dal mio linker
+package objectformat
 
 import (
 	"bufio"
@@ -11,31 +12,21 @@ import (
 
 const LINK string = "LINK"
 
-type objHeader struct {
-	segment_num            uint
-	symbol_num             uint
-	relocation_entries_num uint
+type ObjHeader struct {
+	SegmentNum           uint
+	SymbolNum            uint
+	RelocationEntriesNum uint
 }
 
-// Next comes the segment definitions. Each segment definition contains the segment name, the address where the segment logically starts, the length of the segment in bytes,
-// and a string of code letters describing the segment.
-// Code letters include R for readable, W for writable, and P for present in the object file. (Other letters may be present as well.)
-//
-//	A typical set of segments for an a.out like file would be:
-//
-// .text 1000 2500 RP
-// .data 4000 C00 RWP
-// .bss 5000 1900 RW
-// Segments are numbered in the order their definitions appear, with the first segment being number 1.
-type segmentFlag int
+type SegmentFlag int
 
 const (
-	Readable segmentFlag = iota
+	Readable SegmentFlag = iota
 	Writable
 	Present
 )
 
-func (f segmentFlag) String() string {
+func (f SegmentFlag) String() string {
 	switch f {
 	case Readable:
 		return "R"
@@ -48,14 +39,14 @@ func (f segmentFlag) String() string {
 	}
 }
 
-var segmentFlagParsingMap = map[string]segmentFlag{
+var segmentFlagParsingMap = map[string]SegmentFlag{
 	"R": Readable,
 	"W": Writable,
 	"P": Present,
 }
 
-func parseSegmentFlags(segmentFlags string) ([]segmentFlag, error) {
-	var res []segmentFlag
+func parseSegmentFlags(segmentFlags string) ([]SegmentFlag, error) {
+	var res []SegmentFlag
 
 	for _, c := range segmentFlags {
 		if v, ok := segmentFlagParsingMap[string(c)]; ok {
@@ -69,11 +60,11 @@ func parseSegmentFlags(segmentFlags string) ([]segmentFlag, error) {
 	return res, nil
 }
 
-type segment struct {
-	name          string
-	start_address uint
-	length        uint // in bytes
-	flags         []segmentFlag
+type Segment struct {
+	Name         string
+	StartAddress uint // hex value
+	Length       uint // in bytes
+	Flags        []SegmentFlag
 }
 
 // Next comes the symbol table. Each entry is of the form:
@@ -114,11 +105,11 @@ func parseSymbolKind(kind string) (symbolKind, error) {
 	return 0, fmt.Errorf("symbolKind %s non riconosciuto", kind)
 }
 
-type symbol struct {
-	name   string
-	value  uint // hex value ?
-	segnum uint
-	kind   symbolKind
+type Symbol struct {
+	Name   string
+	Value  uint // hex value
+	Segnum uint
+	Kind   symbolKind
 }
 
 // Next come the relocations, one to a line:
@@ -159,24 +150,23 @@ func parseRelocationKind(kind string) (relocationKind, error) {
 	return 0, fmt.Errorf("symbolKind %s non riconosciuto", kind)
 }
 
-type relocationEntry struct {
-	loc    uint
-	segnum uint
-	ref    uint // segment or symbol number
-	kind   relocationKind
+type RelocationEntry struct {
+	Loc    uint // hex value
+	Segnum uint
+	Ref    uint // segment or symbol number
+	Kind   relocationKind
 }
 
-// Following the relocations comes the object data. The data for each segment is a single long hex string followed by a newline.
-// Each pair of hex digits represents one byte.
-type segmentData []byte
+type SegmentData []byte
 
-// il formato finale è quindi
+// MyObjectFormat è il formato finale
 type MyObjectFormat struct {
-	header          objHeader
-	segmentTable    []segment
-	symbolTable     []symbol
-	relocationTable []relocationEntry
-	data            []segmentData
+	Filename        string
+	Header          ObjHeader
+	SegmentTable    []Segment
+	SymbolTable     []Symbol
+	RelocationTable []RelocationEntry
+	Data            []SegmentData
 }
 
 // helper per ignorare blanks e commenti
@@ -213,6 +203,8 @@ func ParseObjectFile(filename string) (*MyObjectFormat, error) {
 	// except that if it was io.EOF, Scanner.Err will return nil.
 	scanner := bufio.NewScanner(f)
 
+	obj.Filename = filename
+
 	/* parsing dell'header == prime due linee */
 	magic, err := getNextLine(scanner)
 	if err != nil {
@@ -222,90 +214,90 @@ func ParseObjectFile(filename string) (*MyObjectFormat, error) {
 		return nil, fmt.Errorf("magic number sbagliato! %s non è del formato giusto", filename)
 	}
 
-	obj_dims, err := getNextLine(scanner)
+	objDims, err := getNextLine(scanner)
 	if err != nil {
 		return nil, err
 	}
-	_, err = fmt.Sscanf(obj_dims, "%d %d %d", &obj.header.segment_num, &obj.header.symbol_num, &obj.header.relocation_entries_num)
+	_, err = fmt.Sscanf(objDims, "%d %d %d", &obj.Header.SegmentNum, &obj.Header.SymbolNum, &obj.Header.RelocationEntriesNum)
 	if err != nil {
 		return nil, fmt.Errorf("errore nella lettura dell'header: %w", err)
 	}
-	fmt.Println("### HEADER", obj.header)
+	fmt.Println("### HEADER", obj.Header)
 
-	obj.segmentTable = make([]segment, 0, obj.header.segment_num)
-	obj.symbolTable = make([]symbol, 0, obj.header.symbol_num)
-	obj.relocationTable = make([]relocationEntry, 0, obj.header.relocation_entries_num)
-	obj.data = make([]segmentData, 0, obj.header.segment_num)
+	obj.SegmentTable = make([]Segment, 0, obj.Header.SegmentNum)
+	obj.SymbolTable = make([]Symbol, 0, obj.Header.SymbolNum)
+	obj.RelocationTable = make([]RelocationEntry, 0, obj.Header.RelocationEntriesNum)
+	obj.Data = make([]SegmentData, 0, obj.Header.SegmentNum)
 
 	/* parsing dei segmenti */
 	var i uint = 0
-	for ; i < obj.header.segment_num; i++ {
+	for ; i < obj.Header.SegmentNum; i++ {
 		segmentString, err := getNextLine(scanner)
 		if err != nil {
 			return nil, err
 		}
 
-		var s segment
-		var segment_flags string
-		_, err = fmt.Sscanf(segmentString, "%s %d %d %s", &s.name, &s.start_address, &s.length, &segment_flags)
+		var s Segment
+		var segmentFlags string
+		_, err = fmt.Sscanf(segmentString, "%s %x %d %s", &s.Name, &s.StartAddress, &s.Length, &segmentFlags)
 		if err != nil {
 			return nil, fmt.Errorf("errore nella lettura del segmento %d -> %s: %w", i+1, segmentString, err)
 		}
-		s.flags, err = parseSegmentFlags(segment_flags)
+		s.Flags, err = parseSegmentFlags(segmentFlags)
 		if err != nil {
 			return nil, err
 		}
-		obj.segmentTable = append(obj.segmentTable, s)
+		obj.SegmentTable = append(obj.SegmentTable, s)
 	}
-	fmt.Println("### Segmenti", obj.segmentTable)
+	fmt.Println("### Segmenti", obj.SegmentTable)
 
 	/* parsing dei simboli */
 	i = 0
-	for ; i < obj.header.symbol_num; i++ {
+	for ; i < obj.Header.SymbolNum; i++ {
 		symbolString, err := getNextLine(scanner)
 		if err != nil {
 			return nil, err
 		}
 
-		var s symbol
+		var s Symbol
 		var kindString string
-		_, err = fmt.Sscanf(symbolString, "%s %d %d %s", &s.name, &s.value, &s.segnum, &kindString)
+		_, err = fmt.Sscanf(symbolString, "%s %x %d %s", &s.Name, &s.Value, &s.Segnum, &kindString)
 		if err != nil {
 			return nil, fmt.Errorf("errore nella lettura del simbolo %d -> %s: %w", i+1, symbolString, err)
 		}
-		s.kind, err = parseSymbolKind(kindString)
+		s.Kind, err = parseSymbolKind(kindString)
 		if err != nil {
 			return nil, err
 		}
-		obj.symbolTable = append(obj.symbolTable, s)
+		obj.SymbolTable = append(obj.SymbolTable, s)
 	}
-	fmt.Println("### Simboli", obj.symbolTable)
+	fmt.Println("### Simboli", obj.SymbolTable)
 
 	/* parsing delle relocation entries */
 	i = 0
-	for ; i < obj.header.relocation_entries_num; i++ {
+	for ; i < obj.Header.RelocationEntriesNum; i++ {
 		relocationString, err := getNextLine(scanner)
 		if err != nil {
 			return nil, err
 		}
 
-		var r relocationEntry
+		var r RelocationEntry
 		var kindString string
-		_, err = fmt.Sscanf(relocationString, "%d %d %d %s", &r.loc, &r.segnum, &r.ref, &kindString)
+		_, err = fmt.Sscanf(relocationString, "%x %d %d %s", &r.Loc, &r.Segnum, &r.Ref, &kindString)
 		if err != nil {
 			return nil, fmt.Errorf("errore nella lettura della relocation entry %d -> %s: %w", i+1, relocationString, err)
 		}
-		r.kind, err = parseRelocationKind(kindString)
+		r.Kind, err = parseRelocationKind(kindString)
 		if err != nil {
 			return nil, err
 		}
-		obj.relocationTable = append(obj.relocationTable, r)
+		obj.RelocationTable = append(obj.RelocationTable, r)
 	}
-	fmt.Println("### Relocation entries", obj.relocationTable)
+	fmt.Println("### Relocation entries", obj.RelocationTable)
 
 	/* dati dei segmenti */
 	i = 0
-	for ; i < obj.header.segment_num; i++ {
+	for ; i < obj.Header.SegmentNum; i++ {
 		segmentDataHexString, err := getNextLine(scanner)
 		if err != nil {
 			return nil, err
@@ -315,9 +307,9 @@ func ParseObjectFile(filename string) (*MyObjectFormat, error) {
 			return nil, err
 		}
 
-		obj.data = append(obj.data, segmentData)
+		obj.Data = append(obj.Data, segmentData)
 	}
-	fmt.Println("### Dati dei segmenti", obj.data)
+	fmt.Println("### Dati dei segmenti", obj.Data)
 
 	return obj, nil
 }
@@ -334,44 +326,44 @@ func (obj *MyObjectFormat) WriteObjectFile(filename string) error {
 	if err != nil {
 		return err
 	}
-	//header
-	_, err = fmt.Fprintf(f, "%d %d %d\n", obj.header.segment_num, obj.header.symbol_num, obj.header.relocation_entries_num)
+	// header
+	_, err = fmt.Fprintf(f, "%d %d %d\n", obj.Header.SegmentNum, obj.Header.SymbolNum, obj.Header.RelocationEntriesNum)
 	if err != nil {
 		return err
 	}
 	// segments
 	fmt.Fprintln(f, "# segments")
-	for i := 0; i < int(obj.header.segment_num); i++ {
+	for i := 0; i < int(obj.Header.SegmentNum); i++ {
 		flags := ""
-		for _, f := range obj.segmentTable[i].flags {
+		for _, f := range obj.SegmentTable[i].Flags {
 			flags += f.String()
 		}
 
-		_, err = fmt.Fprintf(f, "%s %d %d %s\n", obj.segmentTable[i].name, obj.segmentTable[i].start_address, obj.segmentTable[i].length, flags)
+		_, err = fmt.Fprintf(f, "%s %d %d %s\n", obj.SegmentTable[i].Name, obj.SegmentTable[i].StartAddress, obj.SegmentTable[i].Length, flags)
 		if err != nil {
 			return err
 		}
 	}
 	// symbols
 	fmt.Fprintln(f, "# symbols")
-	for i := 0; i < int(obj.header.symbol_num); i++ {
-		_, err = fmt.Fprintf(f, "%s %d %d %s\n", obj.symbolTable[i].name, obj.symbolTable[i].value, obj.symbolTable[i].segnum, obj.symbolTable[i].kind.String())
+	for i := 0; i < int(obj.Header.SymbolNum); i++ {
+		_, err = fmt.Fprintf(f, "%s %d %d %s\n", obj.SymbolTable[i].Name, obj.SymbolTable[i].Value, obj.SymbolTable[i].Segnum, obj.SymbolTable[i].Kind.String())
 		if err != nil {
 			return err
 		}
 	}
 	// relocatins
 	fmt.Fprintln(f, "# relocations")
-	for i := 0; i < int(obj.header.relocation_entries_num); i++ {
-		_, err = fmt.Fprintf(f, "%d %d %d %s\n", obj.relocationTable[i].loc, obj.relocationTable[i].segnum, obj.relocationTable[i].ref, obj.relocationTable[i].kind.String())
+	for i := 0; i < int(obj.Header.RelocationEntriesNum); i++ {
+		_, err = fmt.Fprintf(f, "%d %d %d %s\n", obj.RelocationTable[i].Loc, obj.RelocationTable[i].Segnum, obj.RelocationTable[i].Ref, obj.RelocationTable[i].Kind.String())
 		if err != nil {
 			return err
 		}
 	}
 	// data
 	fmt.Fprintln(f, "# segment data")
-	for i := 0; i < int(obj.header.segment_num); i++ {
-		_, err = fmt.Fprintln(f, hex.EncodeToString(obj.data[i]))
+	for i := 0; i < int(obj.Header.SegmentNum); i++ {
+		_, err = fmt.Fprintln(f, hex.EncodeToString(obj.Data[i]))
 		if err != nil {
 			return err
 		}

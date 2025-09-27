@@ -1,14 +1,6 @@
 LINK
-3 2 0
+0 0 0
 # segments
-.text 0 1017 R
-.data 2000 320 RW
-.bss 2320 50 RW
 # symbols
-main 0 1 D
-wiggleroom 100 0 U
 # relocations
 # segment data
-00001211abbccc
-ccfffffafafafd
-bcfffffafafafd

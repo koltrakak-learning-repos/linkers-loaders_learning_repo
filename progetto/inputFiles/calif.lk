@@ -7,3 +7,7 @@ LINK
 # symbols
 mellowize 10 1 D
 hottub 42 0 U
+# segment data
+00001211abbccc
+ccfffffafafafd
+bcfffffafafafd

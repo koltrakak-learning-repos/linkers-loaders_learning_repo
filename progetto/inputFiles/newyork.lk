@@ -7,3 +7,7 @@ LINK
 # symbols
 mug 0 1 D
 wiggleroom 80 0 U
+# segment data
+00001211abbccc
+ccfffffafafafd
+bcfffffafafafd

@@ -23,7 +23,10 @@ func main() {
 		log.Fatalln(err)
 	}
 
-	err = outObj.WriteObjectFile(os.Args[len(os.Args)])
+	// todo, aggiungi questo dentro link
+	outObj.Filename = os.Args[len(os.Args)-1]
+
+	err = outObj.WriteObjectFile(outObj.Filename)
 	if err != nil {
 		log.Fatalln(err)
 	}
