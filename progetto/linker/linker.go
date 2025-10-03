@@ -24,19 +24,45 @@ func Link(inputFileNames []string) (*obj.MyObjectFormat, error) {
 
 	outputObj, segmentAllocationTable := allocateStorage(inputObjs)
 
+	// pretty print
 	pretty, _ := json.MarshalIndent(outputObj, "", "  ")
+	fmt.Println("### outputObj")
 	fmt.Println(string(pretty))
 	pretty, _ = json.MarshalIndent(segmentAllocationTable, "", "  ")
+	fmt.Println("### segmentAllocationTable")
+	fmt.Println(string(pretty))
+
+	// in alternativa esiste anche questo che mi stampa i miei enumerativi ma è da configurare
+	// dato che di base spara fuori troppa roba... non ho voglia
+	// "github.com/davecgh/go-spew/spew"
+	// spew.Dump(outputObj)
+	// spew.Dump(segmentAllocationTable)
+
+	segNumSegNameMap := map[uint]string{}
+	for i, s := range outputObj.SegmentTable {
+		segNumSegNameMap[uint(i)+1] = s.Name // nei file oggetto i segnum partono da 1
+	}
+
+	globalSymbolTable, err := resolveSymbols(inputObjs, segmentAllocationTable, segNumSegNameMap, outputObj)
+	if err != nil {
+		return nil, err
+	}
+	pretty, _ = json.MarshalIndent(globalSymbolTable, "", "  ")
+	fmt.Println("### globalSymbolTable")
 	fmt.Println(string(pretty))
 
 	return outputObj, nil
 }
 
+/****** STORAGE ALLOCATION ******/
+
+// la chiave è il nome del file
 type SegmentAllocationTableEntry struct {
 	InputFilename string
 	Segment       obj.Segment
 }
 
+// la chiave è il nome del simbolo
 type SegmentAllocationTable map[string][]SegmentAllocationTableEntry
 
 func align(x uint, alignment uint) uint {
@@ -87,7 +113,6 @@ func allocateStorage(inputObjs []*obj.MyObjectFormat) (*obj.MyObjectFormat, Segm
 	// scorro tutti i miei input e calcolo le lunghezze dei segmenti
 	for _, io := range inputObjs {
 		for _, s := range io.SegmentTable { // go fa automaticamente la dereferenziazione quando accedo ai campi di un puntatore
-
 			// unifico i segmenti che hanno lo stesso nome
 			outputSegPointer, ok := segmentPointerMap[s.Name]
 			if ok {
@@ -139,4 +164,81 @@ func allocateStorage(inputObjs []*obj.MyObjectFormat) (*obj.MyObjectFormat, Segm
 	}
 
 	return &outputObj, segmentAllocationTable
+}
+
+/****** SYMBOL RESOLUTION ******/
+
+type SymbolTableEntry struct {
+	FileName string
+	Symbol   obj.Symbol
+}
+
+// GlobalSymbolTable la chiave è il nome del simbolo
+type GlobalSymbolTable map[string]SymbolTableEntry
+
+func resolveSymbols(inputObjs []*obj.MyObjectFormat,
+	segmentAllocationTable SegmentAllocationTable,
+	segNumSegNameMap map[uint]string,
+	outputObj *obj.MyObjectFormat) (GlobalSymbolTable, error) {
+	globalSymbolTable := GlobalSymbolTable{}
+	unresolvedReferences := map[string][]SymbolTableEntry{}
+
+	for _, o := range inputObjs {
+		for _, sym := range o.SymbolTable {
+			if sym.Kind == obj.Defined {
+				// check if a symbol is defined multiple times
+				_, ok := globalSymbolTable[sym.Name]
+				if ok {
+					return nil, fmt.Errorf("il simbolo %s è stato definito più volte: %s, %s", sym.Name, globalSymbolTable[sym.Name].FileName, o.Filename)
+				} else {
+					// risolvo il valore del simbolo tenendo conto di dove il suo segmento
+					// di definizione (presente in uno dei vari file di input) è stato
+					// rilocato nell'output file
+					segName, ok := segNumSegNameMap[sym.Segnum]
+					if !ok {
+						return nil, fmt.Errorf("trovato simbolo definito dentro a un segnum non esistente: %v->%d", sym, sym.Segnum)
+					}
+					// FIXME: probabilmente con struttura dati più intelligenti non ci sarebbe bisogno di scorrere.
+					// Non ho voglia di implementarle
+					outSegmentMap := map[string]uint{}
+					for _, s := range outputObj.SegmentTable {
+						outSegmentMap[s.Name] = s.StartAddress
+					}
+
+					for _, s := range segmentAllocationTable[segName] {
+						if s.InputFilename == o.Filename {
+							fmt.Println(sym.Name, sym.Value, s.Segment.StartAddress, outSegmentMap[s.Segment.Name])
+							sym.Value += s.Segment.StartAddress + outSegmentMap[s.Segment.Name]
+							break
+						}
+					}
+					// aggiungo il simbolo risolto alla tabella globale
+					globalSymbolTable[sym.Name] = SymbolTableEntry{
+						FileName: o.Filename,
+						Symbol:   sym,
+					}
+					delete(unresolvedReferences, sym.Name)
+				}
+			} else {
+				unresolvedReferences[sym.Name] = append(unresolvedReferences[sym.Name], SymbolTableEntry{
+					FileName: o.Filename,
+					Symbol:   sym,
+				})
+			}
+
+		}
+	}
+
+	// check if there are references with no definition
+	if len(unresolvedReferences) > 0 {
+		errString := ""
+		for k, v := range unresolvedReferences {
+			for _, r := range v {
+				errString += fmt.Sprintf("il simbolo %s all'interno del file %s, non è stato definito\n", k, r.FileName)
+			}
+		}
+		return nil, fmt.Errorf("%s", errString)
+	}
+
+	return globalSymbolTable, nil
 }

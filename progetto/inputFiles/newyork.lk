@@ -1,12 +1,19 @@
 LINK
 3 2 0
+
 # segments: name base length flags
 .text 0    1390 R
 .data 2000 1213  RW
 .bss  3214 1400  RW
-# symbols
+
+# symbols: 	Name, Value (hex value), Segnum, Kind
 mug 0 1 D
-wiggleroom 80 0 U
+hottub 42 2 D
+# wiggleroom 80 0 U # questo sarebbe un common block
+
+# relocations: Loc (hex value), Segnum, Ref (segment or symbol number), Kind
+#
+
 # segment data
 00001211abbccc
 ccfffffafafafd
