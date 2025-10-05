@@ -3,6 +3,7 @@ package linker
 
 import (
 	"encoding/json"
+	"encoding/binary"
 	"fmt"
 	obj "koltrakak/my-linker/objectformat"
 )
@@ -13,6 +14,7 @@ const (
 )
 
 func Link(inputFileNames []string) (*obj.MyObjectFormat, error) {
+	// parse input objects
 	var inputObjs []*obj.MyObjectFormat
 	for _, f := range inputFileNames {
 		o, err := obj.ParseObjectFile(f)
@@ -22,8 +24,8 @@ func Link(inputFileNames []string) (*obj.MyObjectFormat, error) {
 		inputObjs = append(inputObjs, o)
 	}
 
+	// allocate storage in output object
 	outputObj, segmentAllocationTable := allocateStorage(inputObjs)
-
 	// pretty print
 	pretty, _ := json.MarshalIndent(outputObj, "", "  ")
 	fmt.Println("### outputObj")
@@ -31,18 +33,17 @@ func Link(inputFileNames []string) (*obj.MyObjectFormat, error) {
 	pretty, _ = json.MarshalIndent(segmentAllocationTable, "", "  ")
 	fmt.Println("### segmentAllocationTable")
 	fmt.Println(string(pretty))
-
 	// in alternativa esiste anche questo che mi stampa i miei enumerativi ma è da configurare
 	// dato che di base spara fuori troppa roba... non ho voglia
 	// "github.com/davecgh/go-spew/spew"
 	// spew.Dump(outputObj)
 	// spew.Dump(segmentAllocationTable)
 
+	// resolve Symbols
 	segNumSegNameMap := map[uint]string{}
 	for i, s := range outputObj.SegmentTable {
 		segNumSegNameMap[uint(i)+1] = s.Name // nei file oggetto i segnum partono da 1
 	}
-
 	globalSymbolTable, err := resolveSymbols(inputObjs, segmentAllocationTable, segNumSegNameMap, outputObj)
 	if err != nil {
 		return nil, err
@@ -50,6 +51,9 @@ func Link(inputFileNames []string) (*obj.MyObjectFormat, error) {
 	pretty, _ = json.MarshalIndent(globalSymbolTable, "", "  ")
 	fmt.Println("### globalSymbolTable")
 	fmt.Println(string(pretty))
+
+	// apply fixups
+	applyFixups(inputObjs, outputObj, globalSymbolTable)
 
 	return outputObj, nil
 }
@@ -99,9 +103,9 @@ func allocateStorage(inputObjs []*obj.MyObjectFormat) (*obj.MyObjectFormat, Segm
 				Flags:        []obj.SegmentFlag{obj.Readable, obj.Writable},
 			},
 		},
-		SymbolTable:     []obj.Symbol{},
-		RelocationTable: []obj.RelocationEntry{},
-		Data:            []obj.SegmentData{},
+		SymbolTable:     []obj.Symbol{},          // questa probabilmente sarà vuota
+		RelocationTable: []obj.RelocationEntry{}, // anche questa
+		Data:            []byte{},
 	}
 
 	segmentPointerMap := map[string]*obj.Segment{
@@ -158,8 +162,9 @@ func allocateStorage(inputObjs []*obj.MyObjectFormat) (*obj.MyObjectFormat, Segm
 		baseAddress := align(prev.StartAddress+prev.Length, PAGE_SIZE)
 		s.StartAddress = baseAddress
 
-		for _, entry := range segmentAllocationTable[s.Name] {
-			entry.Segment.StartAddress += baseAddress // aggiungo il baseAddress a tutti i segmentini dentro al segmentone corrente
+		// sono uno scemo e qua stavo modificando una copia
+		for i := range segmentAllocationTable[s.Name] {
+			segmentAllocationTable[s.Name][i].Segment.StartAddress += baseAddress // aggiungo il baseAddress a tutti i segmentini dentro al segmentone corrente
 		}
 	}
 
@@ -183,6 +188,7 @@ func resolveSymbols(inputObjs []*obj.MyObjectFormat,
 	globalSymbolTable := GlobalSymbolTable{}
 	unresolvedReferences := map[string][]SymbolTableEntry{}
 
+	// scorro le symbol table di tutti i miei oggetti
 	for _, o := range inputObjs {
 		for _, sym := range o.SymbolTable {
 			if sym.Kind == obj.Defined {
@@ -198,17 +204,12 @@ func resolveSymbols(inputObjs []*obj.MyObjectFormat,
 					if !ok {
 						return nil, fmt.Errorf("trovato simbolo definito dentro a un segnum non esistente: %v->%d", sym, sym.Segnum)
 					}
-					// FIXME: probabilmente con struttura dati più intelligenti non ci sarebbe bisogno di scorrere.
-					// Non ho voglia di implementarle
-					outSegmentMap := map[string]uint{}
-					for _, s := range outputObj.SegmentTable {
-						outSegmentMap[s.Name] = s.StartAddress
-					}
-
+					// FIXME: probabilmente con una struttura dati più intelligente non ci sarebbe bisogno di scorrere.
+					// Non ho voglia di implementarla
 					for _, s := range segmentAllocationTable[segName] {
 						if s.InputFilename == o.Filename {
-							fmt.Println(sym.Name, sym.Value, s.Segment.StartAddress, outSegmentMap[s.Segment.Name])
-							sym.Value += s.Segment.StartAddress + outSegmentMap[s.Segment.Name]
+							fmt.Printf("symbol: %s, (input)segment-relative value: %x, (input)segment base address: %x\n", sym.Name, sym.Value, s.Segment.StartAddress)
+							sym.Value += s.Segment.StartAddress
 							break
 						}
 					}
@@ -241,4 +242,31 @@ func resolveSymbols(inputObjs []*obj.MyObjectFormat,
 	}
 
 	return globalSymbolTable, nil
+}
+
+/****** FIXUP APPLICATION ******/
+
+// TODO: questo è altamente parallelizzabile dato che tutti i fixup sono indipendenti
+func applyFixups(inputObjs []*obj.MyObjectFormat, outputObj *obj.MyObjectFormat, globalSymbolTable GlobalSymbolTable) (*obj.MyObjectFormat, error) {
+	// scorro tutte le relocation entry di tutti gli input file
+	for _, io := range inputObjs {
+		for _, re := range io.RelocationTable {
+			fmt.Println(re)
+			switch re.Kind {
+			case obj.Absolute4:
+				// qua è tutto sbagliato ma devo fare qualcosa del genere
+				fixupLocation := io.Data[re.Loc:re.Loc+4]
+				symbol := io.SymbolTable[re.Ref].Name
+				addend := globalSymbolTable[symbol].Symbol.Value
+				val := binary.BigEndian.Uint32(fixupLocation)
+				val += uint32(re.Ref) + uint32(addend)
+				binary.BigEndian.PutUint32(fixupLocation, val)
+			case obj.Relative4:
+			default:
+				return nil, fmt.Errorf("trovata relocation entry di tipo non supportato: %s", re.Kind)
+			}
+		}
+	}
+
+	return nil, nil
 }

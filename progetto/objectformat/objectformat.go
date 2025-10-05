@@ -157,8 +157,6 @@ type RelocationEntry struct {
 	Kind   relocationKind
 }
 
-type SegmentData []byte
-
 // MyObjectFormat è il formato finale
 type MyObjectFormat struct {
 	Filename        string
@@ -166,7 +164,7 @@ type MyObjectFormat struct {
 	SegmentTable    []Segment
 	SymbolTable     []Symbol
 	RelocationTable []RelocationEntry
-	Data            []SegmentData
+	Data            []byte
 }
 
 // helper per ignorare blanks e commenti
@@ -227,7 +225,6 @@ func ParseObjectFile(filename string) (*MyObjectFormat, error) {
 	obj.SegmentTable = make([]Segment, 0, obj.Header.SegmentNum)
 	obj.SymbolTable = make([]Symbol, 0, obj.Header.SymbolNum)
 	obj.RelocationTable = make([]RelocationEntry, 0, obj.Header.RelocationEntriesNum)
-	obj.Data = make([]SegmentData, 0, obj.Header.SegmentNum)
 
 	/* parsing dei segmenti */
 	var i uint = 0
@@ -307,9 +304,10 @@ func ParseObjectFile(filename string) (*MyObjectFormat, error) {
 			return nil, err
 		}
 
-		obj.Data = append(obj.Data, segmentData)
+		obj.Data = append(obj.Data, segmentData...)
 	}
-	fmt.Println("### Dati dei segmenti", obj.Data)
+	fmt.Println("### Dati dei segmenti -", len(obj.Data), "byte:")
+	fmt.Println(obj.Data)
 
 	return obj, nil
 }
@@ -361,12 +359,16 @@ func (obj *MyObjectFormat) WriteObjectFile(filename string) error {
 		}
 	}
 	// data
+	var start uint = 0
 	fmt.Fprintln(f, "# segment data")
 	for i := 0; i < int(obj.Header.SegmentNum); i++ {
-		_, err = fmt.Fprintln(f, hex.EncodeToString(obj.Data[i]))
+		end := obj.SegmentTable[0].Length
+		segment := obj.Data[start:end]
+		_, err = fmt.Fprintln(f, hex.EncodeToString(segment))
 		if err != nil {
 			return err
 		}
+		start = end
 	}
 	return nil
 }
