@@ -45,12 +45,12 @@ var segmentFlagParsingMap = map[string]SegmentFlag{
 	"P": Present,
 }
 
-func parseSegmentFlags(segmentFlags string) ([]SegmentFlag, error) {
-	var res []SegmentFlag
+func parseSegmentFlags(segmentFlags string) (map[SegmentFlag]bool, error) {
+	res := map[SegmentFlag]bool{}
 
 	for _, c := range segmentFlags {
 		if v, ok := segmentFlagParsingMap[string(c)]; ok {
-			res = append(res, v)
+			res[v] = true
 		} else {
 			// flag sconosciuta
 			return nil, fmt.Errorf("trovata flag sconosciuta %s", string(c))
@@ -64,7 +64,7 @@ type Segment struct {
 	Name         string
 	StartAddress uint // hex value
 	Length       uint // in bytes
-	Flags        []SegmentFlag
+	Flags        map[SegmentFlag]bool
 }
 
 // Next comes the symbol table. Each entry is of the form:
@@ -161,8 +161,8 @@ type RelocationEntry struct {
 type MyObjectFormat struct {
 	Filename        string
 	Header          ObjHeader
-	SegmentTable    []Segment
-	SymbolTable     []Symbol
+	SegmentTable    []*Segment
+	SymbolTable     []*Symbol
 	RelocationTable []RelocationEntry
 	Data            []byte
 }
@@ -222,8 +222,8 @@ func ParseObjectFile(filename string) (*MyObjectFormat, error) {
 	}
 	fmt.Println("### HEADER", obj.Header)
 
-	obj.SegmentTable = make([]Segment, 0, obj.Header.SegmentNum)
-	obj.SymbolTable = make([]Symbol, 0, obj.Header.SymbolNum)
+	obj.SegmentTable = make([]*Segment, 0, obj.Header.SegmentNum)
+	obj.SymbolTable = make([]*Symbol, 0, obj.Header.SymbolNum)
 	obj.RelocationTable = make([]RelocationEntry, 0, obj.Header.RelocationEntriesNum)
 
 	/* parsing dei segmenti */
@@ -244,13 +244,12 @@ func ParseObjectFile(filename string) (*MyObjectFormat, error) {
 		if err != nil {
 			return nil, err
 		}
-		obj.SegmentTable = append(obj.SegmentTable, s)
+		obj.SegmentTable = append(obj.SegmentTable, &s)
 	}
 	fmt.Println("### Segmenti", obj.SegmentTable)
 
 	/* parsing dei simboli */
-	i = 0
-	for ; i < obj.Header.SymbolNum; i++ {
+	for i = 0; i < obj.Header.SymbolNum; i++ {
 		symbolString, err := getNextLine(scanner)
 		if err != nil {
 			return nil, err
@@ -266,13 +265,12 @@ func ParseObjectFile(filename string) (*MyObjectFormat, error) {
 		if err != nil {
 			return nil, err
 		}
-		obj.SymbolTable = append(obj.SymbolTable, s)
+		obj.SymbolTable = append(obj.SymbolTable, &s)
 	}
 	fmt.Println("### Simboli", obj.SymbolTable)
 
 	/* parsing delle relocation entries */
-	i = 0
-	for ; i < obj.Header.RelocationEntriesNum; i++ {
+	for i = 0; i < obj.Header.RelocationEntriesNum; i++ {
 		relocationString, err := getNextLine(scanner)
 		if err != nil {
 			return nil, err
@@ -293,21 +291,25 @@ func ParseObjectFile(filename string) (*MyObjectFormat, error) {
 	fmt.Println("### Relocation entries", obj.RelocationTable)
 
 	/* dati dei segmenti */
-	i = 0
-	for ; i < obj.Header.SegmentNum; i++ {
-		segmentDataHexString, err := getNextLine(scanner)
-		if err != nil {
-			return nil, err
+	for _, s := range obj.SegmentTable {
+		if s.Flags[Present] {
+			segmentDataHexString, err := getNextLine(scanner)
+			if err != nil {
+				return nil, err
+			}
+			segmentData, err := hex.DecodeString(segmentDataHexString)
+			if err != nil {
+				return nil, err
+			}
+			obj.Data = append(obj.Data, segmentData...)
+		} else {
+			// è un segmento non presente nell'oggetto (probabilmente bss)
+			// Potrei aggiungere un segmento pieno di zeri (quello che fà
+			/// il loader), ma non penso neanche mi serva
 		}
-		segmentData, err := hex.DecodeString(segmentDataHexString)
-		if err != nil {
-			return nil, err
-		}
-
-		obj.Data = append(obj.Data, segmentData...)
 	}
 	fmt.Println("### Dati dei segmenti -", len(obj.Data), "byte:")
-	fmt.Println(obj.Data)
+	// fmt.Println(obj.Data)
 
 	return obj, nil
 }
@@ -331,21 +333,21 @@ func (obj *MyObjectFormat) WriteObjectFile(filename string) error {
 	}
 	// segments
 	fmt.Fprintln(f, "# segments")
-	for i := 0; i < int(obj.Header.SegmentNum); i++ {
+	for _, seg := range obj.SegmentTable {
 		flags := ""
-		for _, f := range obj.SegmentTable[i].Flags {
-			flags += f.String()
+		for flag := range seg.Flags {
+			flags += flag.String()
 		}
 
-		_, err = fmt.Fprintf(f, "%s %d %d %s\n", obj.SegmentTable[i].Name, obj.SegmentTable[i].StartAddress, obj.SegmentTable[i].Length, flags)
+		_, err = fmt.Fprintf(f, "%s %d %d %s\n", seg.Name, seg.StartAddress, seg.Length, flags)
 		if err != nil {
 			return err
 		}
 	}
 	// symbols
 	fmt.Fprintln(f, "# symbols")
-	for i := 0; i < int(obj.Header.SymbolNum); i++ {
-		_, err = fmt.Fprintf(f, "%s %d %d %s\n", obj.SymbolTable[i].Name, obj.SymbolTable[i].Value, obj.SymbolTable[i].Segnum, obj.SymbolTable[i].Kind.String())
+	for _, sym := range obj.SymbolTable {
+		_, err = fmt.Fprintf(f, "%s %d %d %s\n", sym.Name, sym.Value, sym.Segnum, sym.Kind.String())
 		if err != nil {
 			return err
 		}
@@ -361,8 +363,16 @@ func (obj *MyObjectFormat) WriteObjectFile(filename string) error {
 	// data
 	var start uint = 0
 	fmt.Fprintln(f, "# segment data")
-	for i := 0; i < int(obj.Header.SegmentNum); i++ {
-		end := obj.SegmentTable[0].Length
+	for _, seg := range obj.SegmentTable {
+		if !seg.Flags[Present] {
+			// segmenti non presenti chiaramente
+			// non hanno nulla che va scritto
+			continue
+		}
+		end := start + seg.Length
+		if len(obj.Data) < int(start) || len(obj.Data) < int(end) {
+			return fmt.Errorf("l'oggetto da scrivere non ha abbastanza dati rispetto a quanto indicato dai suoi segmenti")
+		}
 		segment := obj.Data[start:end]
 		_, err = fmt.Fprintln(f, hex.EncodeToString(segment))
 		if err != nil {

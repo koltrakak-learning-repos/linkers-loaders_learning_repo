@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	lnk "koltrakak/my-linker/linker"
 	"log"
 	"os"
@@ -23,11 +24,12 @@ func main() {
 		log.Fatalln(err)
 	}
 
-	// todo, aggiungi questo dentro link
+	// TODO: aggiungi questo dentro link
 	outObj.Filename = os.Args[len(os.Args)-1]
 
 	err = outObj.WriteObjectFile(outObj.Filename)
 	if err != nil {
 		log.Fatalln(err)
 	}
+	fmt.Println("### output prodotto")
 }

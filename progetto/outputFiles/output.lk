@@ -1,6 +1,9 @@
 LINK
-0 0 0
+3 0 0
 # segments
+.text 4096 3942 PR
+.data 8192 2050 WPR
+.bss 12288 2390 RW
 # symbols
 # relocations
 # segment data
