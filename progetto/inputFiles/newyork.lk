@@ -9,7 +9,7 @@ LINK
 # symbols: 	Name, Value (hex value), Segnum, Kind
 mug 0 1 D
 hottub 42 2 D
-# wiggleroom 80 0 U # questo sarebbe un common block
+# wiggleroom 80 0 U # questo sarebbe un common block (value > 0)
 
 # relocations: Loc (hex value), Segnum, Ref (segment or symbol number), Kind
 #

@@ -23,6 +23,8 @@ func main() {
 	if err != nil {
 		log.Fatalln(err)
 	}
+	fmt.Println("### output prodotto")
+	// fmt.Println(outObj)
 
 	// TODO: aggiungi questo dentro link
 	outObj.Filename = os.Args[len(os.Args)-1]
@@ -31,5 +33,4 @@ func main() {
 	if err != nil {
 		log.Fatalln(err)
 	}
-	fmt.Println("### output prodotto")
 }

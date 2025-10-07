@@ -2,7 +2,7 @@
 package linker
 
 import (
-	// "encoding/binary"
+	"encoding/binary"
 	"encoding/json"
 	"fmt"
 	obj "koltrakak/my-linker/objectformat"
@@ -51,9 +51,12 @@ func Link(inputFileNames []string) (*obj.MyObjectFormat, error) {
 	pretty, _ = json.MarshalIndent(globalSymbolTable, "", "  ")
 	fmt.Println("### globalSymbolTable")
 	fmt.Println(string(pretty))
-	//
-	// // apply fixups
-	// applyFixups(inputObjs, outputObj, globalSymbolTable)
+
+	// apply fixups
+	applyFixups(inputObjs, globalSymbolTable, segmentAllocationTable, segNumSegNameMap)
+
+	// write fixed data segments
+	writeFixedData(inputObjs, outputObj)
 
 	return outputObj, nil
 }
@@ -115,7 +118,7 @@ func allocateStorage(inputObjs []*obj.MyObjectFormat) (*obj.MyObjectFormat, Segm
 		},
 		SymbolTable:     []*obj.Symbol{},         // questa probabilmente sarà vuota
 		RelocationTable: []obj.RelocationEntry{}, // anche questa
-		Data:            []byte{},
+		Data:            []obj.SegmentData{},
 	}
 
 	// mappa di supporto per non dover scorrere la tabella linearmente
@@ -199,6 +202,15 @@ func allocateStorage(inputObjs []*obj.MyObjectFormat) (*obj.MyObjectFormat, Segm
 		prevSeg = outSeg
 	}
 
+	// infine, ora che so quanta memoria occupa ogni segmento
+	// posso allocare il vettore dei dati
+	for _, seg := range outputObj.SegmentTable {
+		if seg.Flags[obj.Present] {
+			outputObj.Data = append(outputObj.Data, make(obj.SegmentData, seg.Length))
+			// i dati ce li copio dopo che ho applicato i fixup
+		}
+	}
+
 	return &outputObj, segmentAllocationTable
 }
 
@@ -274,27 +286,84 @@ func resolveSymbols(inputObjs []*obj.MyObjectFormat,
 
 /****** FIXUP APPLICATION ******/
 
+// per semplificarmi la vita, i segmenti vengono trattati come simboli e sono presenti nella symbol table.
+// "this makes segment relative relocation a special case of symbol relative one"
+
 // TODO: questo è altamente parallelizzabile dato che tutti i fixup sono indipendenti
-// func applyFixups(inputObjs []*obj.MyObjectFormat, outputObj *obj.MyObjectFormat, globalSymbolTable GlobalSymbolTable) (*obj.MyObjectFormat, error) {
-// 	// scorro tutte le relocation entry di tutti gli input file
-// 	for _, io := range inputObjs {
-// 		for _, re := range io.RelocationTable {
-// 			fmt.Println(re)
-// 			switch re.Kind {
-// 			case obj.Absolute4:
-// 				// qua è tutto sbagliato ma devo fare qualcosa del genere
-// 				fixupLocation := io.Data[re.Loc : re.Loc+4]
-// 				symbol := io.SymbolTable[re.Ref].Name
-// 				addend := globalSymbolTable[symbol].Symbol.Value
-// 				val := binary.BigEndian.Uint32(fixupLocation)
-// 				val += uint32(re.Ref) + uint32(addend)
-// 				binary.BigEndian.PutUint32(fixupLocation, val)
-// 			case obj.Relative4:
-// 			default:
-// 				return nil, fmt.Errorf("trovata relocation entry di tipo non supportato: %s", re.Kind)
-// 			}
-// 		}
-// 	}
-//
-// 	return nil, nil
-// }
+func applyFixups(inputObjs []*obj.MyObjectFormat,
+	globalSymbolTable GlobalSymbolTable,
+	segmentAllocationTable SegmentAllocationTable,
+	segNumSegNameMap map[uint]string) (*obj.MyObjectFormat, error) {
+
+	// scorro tutte le relocation entry di tutti gli input file
+	for _, io := range inputObjs {
+		for _, re := range io.RelocationTable {
+			var relocationValue uint
+			fixupLocationValue := io.Data[re.Segnum-1][re.Loc : re.Loc+4] // devo togliere uno dati che i segnum partono da 1
+			symbolName := io.SymbolTable[re.Ref-1].Name                   // devo togliere uno dato che i symbolnum partono da 1
+			symbol := globalSymbolTable[symbolName].Symbol
+			defined := io.SymbolTable[re.Ref-1].Kind == obj.Defined // devo togliere uno dato che i symbolnum partono da 1
+			segOfSymbol := segNumSegNameMap[symbol.Segnum]
+			// Devo applicare i fixup considerando 3 variabili:
+			// - location della relocation entry e simbolo (defined) con cui la
+			//   risolvo, sono nello stesso segmento?
+			// - tipo della relocation entry (assoluta, relativa, ...)
+			// - il simbolo con cui risolvo la relocation entry è definito o no?
+			// non ho voglia di spiegare come queste informazioni vanno utilizzate
+			// (futuro me non ti arrabbiare)
+			switch re.Kind {
+			case obj.Absolute4:
+				if defined {
+					relocationValue = segmentAllocationTable[segOfSymbol][io.Filename].StartAddress
+				} else {
+					// per simboli non definiti il valore nella location è zero,
+					// sommo quindi il valore finale del simbolo
+					relocationValue = globalSymbolTable[symbolName].Symbol.Value
+				}
+
+			case obj.Relative4:
+				segOfFixup := segNumSegNameMap[re.Segnum]
+				fixupOutBaseAddress := segmentAllocationTable[segOfFixup][io.Filename].StartAddress
+				fixupOutLocation := re.Loc + fixupOutBaseAddress
+
+				if defined {
+					if segOfFixup == segOfSymbol {
+						// non devo fare niente, l'offset continua ad essere corretto
+					} else {
+						symbolOutBaseAddress := segmentAllocationTable[segOfSymbol][io.Filename].StartAddress
+						// aggiungo di quanto si è spostato il mio target,
+						// tolgo di quanto mi sono spostato io
+						relocationValue = symbolOutBaseAddress - fixupOutBaseAddress
+					}
+				} else {
+					// se il riferimento è relativo devo saltare della differenza tra le due posizioni
+					relocationValue = globalSymbolTable[symbolName].Symbol.Value - fixupOutLocation
+				}
+
+			default:
+				return nil, fmt.Errorf("trovata relocation entry di tipo non supportato: %s", re.Kind)
+			}
+
+			fmt.Println("### fixup applied")
+			val := binary.BigEndian.Uint32(fixupLocationValue)
+			fmt.Printf("%x + %x\n", fixupLocationValue, relocationValue)
+			val += uint32(relocationValue)
+			binary.BigEndian.PutUint32(fixupLocationValue, val)
+			fmt.Printf("%x\n", fixupLocationValue)
+		}
+	}
+
+	return nil, nil
+}
+
+func writeFixedData(inputObjs []*obj.MyObjectFormat, outputObj *obj.MyObjectFormat) {
+	for _, io := range inputObjs {
+		// FIXME: qua sto assumendo che l'ordine dei segmenti sia lo stesso
+		// sia tra gli inputfile che nell'outputfile. Questo non necessariamente
+		// è vero. Un approccio migliore sarebbe stato usare una mappa anche per
+		// i segmenti dati
+		for i, dataSeg := range io.Data {
+			outputObj.Data[i] = append(outputObj.Data[i], dataSeg...)
+		}
+	}
+}

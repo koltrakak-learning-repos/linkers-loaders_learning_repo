@@ -157,6 +157,8 @@ type RelocationEntry struct {
 	Kind   relocationKind
 }
 
+type SegmentData []byte
+
 // MyObjectFormat è il formato finale
 type MyObjectFormat struct {
 	Filename        string
@@ -164,7 +166,7 @@ type MyObjectFormat struct {
 	SegmentTable    []*Segment
 	SymbolTable     []*Symbol
 	RelocationTable []RelocationEntry
-	Data            []byte
+	Data            []SegmentData
 }
 
 // helper per ignorare blanks e commenti
@@ -291,8 +293,8 @@ func ParseObjectFile(filename string) (*MyObjectFormat, error) {
 	fmt.Println("### Relocation entries", obj.RelocationTable)
 
 	/* dati dei segmenti */
-	for _, s := range obj.SegmentTable {
-		if s.Flags[Present] {
+	for _, seg := range obj.SegmentTable {
+		if seg.Flags[Present] {
 			segmentDataHexString, err := getNextLine(scanner)
 			if err != nil {
 				return nil, err
@@ -301,15 +303,14 @@ func ParseObjectFile(filename string) (*MyObjectFormat, error) {
 			if err != nil {
 				return nil, err
 			}
-			obj.Data = append(obj.Data, segmentData...)
+			obj.Data = append(obj.Data, segmentData)
 		} else {
 			// è un segmento non presente nell'oggetto (probabilmente bss)
 			// Potrei aggiungere un segmento pieno di zeri (quello che fà
 			/// il loader), ma non penso neanche mi serva
 		}
 	}
-	fmt.Println("### Dati dei segmenti -", len(obj.Data), "byte:")
-	// fmt.Println(obj.Data)
+	// fmt.Println("### Dati", obj.Data)
 
 	return obj, nil
 }
@@ -361,24 +362,20 @@ func (obj *MyObjectFormat) WriteObjectFile(filename string) error {
 		}
 	}
 	// data
-	var start uint = 0
 	fmt.Fprintln(f, "# segment data")
-	for _, seg := range obj.SegmentTable {
+	for i, seg := range obj.SegmentTable {
 		if !seg.Flags[Present] {
 			// segmenti non presenti chiaramente
 			// non hanno nulla che va scritto
 			continue
 		}
-		end := start + seg.Length
-		if len(obj.Data) < int(start) || len(obj.Data) < int(end) {
-			return fmt.Errorf("l'oggetto da scrivere non ha abbastanza dati rispetto a quanto indicato dai suoi segmenti")
+		if len(obj.Data[i]) < int(seg.Length) {
+			return fmt.Errorf("il file oggetto da scrivere non ha abbastanza dati rispetto a quanto indicato dalla sua segment table")
 		}
-		segment := obj.Data[start:end]
-		_, err = fmt.Fprintln(f, hex.EncodeToString(segment))
+		_, err = fmt.Fprintln(f, hex.EncodeToString(obj.Data[i]))
 		if err != nil {
 			return err
 		}
-		start = end
 	}
 	return nil
 }

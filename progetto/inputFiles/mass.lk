@@ -8,7 +8,7 @@ LINK
 
 # symbols: 	Name, Value (hex value), Segnum, Kind
 schrod 0 1 D
-# wiggleroom 200 0 U # questo sarebbe un common block
+# wiggleroom 200 0 U # questo sarebbe un common block (value > 0)
 harbor 300 2 D
 
 # relocations: Loc (hex value), Segnum, Ref (segment or symbol number), Kind

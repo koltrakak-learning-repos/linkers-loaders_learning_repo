@@ -8,7 +8,7 @@ LINK
 
 # symbols: 	Name, Value (hex value), Segnum, Kind
 mellowize 10 1 D
-hottub 42 0 U # questo è definito dentro a newyork.lk
+hottub 0 0 U # questo è definito dentro a newyork.lk
 
 # relocations: Loc (hex value), Segnum, Ref (segment or symbol number), Kind
 #
